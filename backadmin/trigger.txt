@@ -1,0 +1,268 @@
+CREATE OR REPLACE FUNCTION afficher_message_avant_insert_exemple()
+RETURNS TRIGGER AS $$
+DECLARE 
+    nom_utilisateur VARCHAR(50);
+BEGIN
+    SELECT u.nom INTO nom_utilisateur 
+    FROM users u
+    INNER JOIN produit p ON u.id_user = NEW.id_user;
+
+    -- Utilisez la fonction RAISE NOTICE avec un modèle de chaîne
+    RAISE NOTICE '% a inséré un nouveau produit', nom_utilisateur;
+
+    -- Insérez le message dans la table de journalisation
+    INSERT INTO trigger_log (message) VALUES (nom_utilisateur || ' a inséré un nouveau produit');
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE TRIGGER afficher_message_trigger_exemple
+BEFORE INSERT ON produit
+FOR EACH ROW
+EXECUTE FUNCTION afficher_message_avant_insert_exemple();
+
+
+CREATE OR REPLACE FUNCTION audit_trigger()
+RETURNS TRIGGER AS $$
+DECLARE
+    
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        action_type := 'insertion';
+    ELSIF TG_OP = 'UPDATE' THEN 
+        action_type := 'modification';
+    ELSIF TG_OP = 'DELETE' THEN
+        action_type := 'suppression';
+    END IF;
+
+    SELECT u.nom INTO nom_utilisateur 
+    FROM users u
+    INNER JOIN approv a ON u.id_user=a.id_user where u.id_user = NEW.id_user;
+
+    SELECT f.nom INTO nom_fournisseur 
+    FROM fournisseur f
+    INNER JOIN approv a ON f.idfr=a.idfr where f.idfr = NEW.idfr;
+
+    SELECT p.design INTO design_prod 
+    FROM  produit p
+    INNER JOIN approv a ON p.idprod = NEW.idprod;
+
+    SELECT NEW.qte INTO qte_recent 
+    FROM approv;
+
+    SELECT a.qte INTO qte_ancien 
+    FROM approv a 
+    WHERE a.idapprov = (SELECT MAX(idapprov) FROM approv WHERE idprod = NEW.idprod) ;
+
+    INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+    VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+VGM5J1XDKNJ4AXZA4MES1TM3
+
+
+DECLARE
+    nom_utilisateur TEXT;
+    nom_fournisseur TEXT;
+    design_prod TEXT;
+    qte_recent INT;
+    qte_ancien INT;
+    action_type TEXT;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        action_type := 'insertion';
+		
+        SELECT u.nom INTO nom_utilisateur 
+    	FROM users u
+    	INNER JOIN approv a ON u.id_user=a.id_user where u.id_user = NEW.id_user;
+
+    	SELECT f.nom INTO nom_fournisseur 
+    	FROM fournisseur f
+    	INNER JOIN approv a ON f.idfr=a.idfr where f.idfr = NEW.idfr;
+
+    	SELECT p.design INTO design_prod 
+    	FROM  produit p
+    	INNER JOIN approv a ON p.idprod = NEW.idprod;
+
+    	SELECT a.qte INTO qte_ancien 
+    	FROM approv a 
+    	WHERE a.idapprov = (SELECT MAX(idapprov) FROM approv WHERE idprod = NEW.idprod) ;
+        
+        qte_recent := NEW.qte;
+
+        INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+        VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+        RETURN NEW;
+		
+    ELSIF TG_OP = 'UPDATE' THEN 
+        action_type := 'modification';
+        
+        -- Récupérer les valeurs avant la mise à jour
+        SELECT f.nom, p.design, a.qte
+        INTO nom_fournisseur, design_prod, qte_ancien
+        FROM fournisseur f
+        INNER JOIN approv a ON f.idfr = a.idfr 
+        INNER JOIN produit p ON p.idprod = a.idprod
+        WHERE a.idapprov = OLD.idapprov;
+		
+		-- Récupérer le nom de l'utilisateur après la mise à jour
+        SELECT nom INTO nom_utilisateur
+        FROM users
+        WHERE id_user = NEW.id_user;
+        qte_recent := NEW.qte;
+		
+        INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+        VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+        RETURN NEW;
+		
+    ELSIF TG_OP = 'DELETE' THEN
+        action_type := 'suppression';
+        -- Retrieve the values before deletion
+    SELECT u.nom, f.nom, p.design, a.qte
+    INTO nom_utilisateur, nom_fournisseur, design_prod, qte_ancien
+    FROM users u
+    INNER JOIN approv a ON u.id_user = a.id_user  
+    INNER JOIN fournisseur f ON f.idfr = a.idfr  
+    INNER JOIN produit p ON p.idprod = a.idprod
+    WHERE a.idapprov = OLD.idapprov;
+
+    -- Since we don't have NEW.qte for a DELETE, we can assume qte_recent is  0
+    qte_recent :=  0;
+
+    -- Insert the audit record for the deletion
+    INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+    VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+	RETURN OLD;
+    END IF;
+
+    
+END;
+
+
+
+
+
+
+
+
+
+DECLARE
+    nom_utilisateur TEXT;
+    nom_fournisseur TEXT;
+    design_prod TEXT;
+    qte_recent INT;
+    qte_ancien INT;
+    action_type TEXT;
+    last_update_time_modification timestamp;
+    last_update_time_suppression timestamp;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        action_type := 'insertion';
+        
+        -- Définir le paramètre de configuration app.user_id pour l'INSERT
+        IF NEW.id_user IS NOT NULL THEN
+            PERFORM set_config('app.user_id', NEW.id_user::text, true);
+        END IF;
+
+        SELECT u.nom INTO nom_utilisateur 
+        FROM users u
+        WHERE u.id_user = NEW.id_user;
+
+        SELECT f.nom INTO nom_fournisseur 
+        FROM fournisseur f
+        WHERE f.idfr = NEW.idfr;
+
+        SELECT p.design INTO design_prod 
+        FROM produit p
+        INNER JOIN approv a ON p.idprod = NEW.idprod;
+
+        SELECT a.qte INTO qte_ancien 
+        FROM approv a 
+        WHERE a.idapprov = (SELECT MAX(idapprov) FROM approv WHERE idprod = NEW.idprod) ;
+        
+        qte_recent := NEW.qte;
+
+        -- Réinitialiser le paramètre de configuration app.user_id après l'INSERT
+        IF NEW.id_user IS NOT NULL THEN
+            PERFORM set_config('app.user_id', NULL, true);
+        END IF;
+
+        INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+        VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+
+        RETURN NEW;
+        
+    ELSIF TG_OP = 'UPDATE' THEN 
+        action_type := 'modification';
+        
+        -- Récupérer les valeurs avant la mise à jour
+        SELECT f.nom, p.design, a.qte
+        INTO nom_fournisseur, design_prod, qte_ancien
+        FROM fournisseur f
+        INNER JOIN approv a ON f.idfr = a.idfr 
+        INNER JOIN produit p ON p.idprod = a.idprod
+        WHERE a.idapprov = NEW.idapprov;
+
+        -- Récupérer le nom de l'utilisateur après la mise à jour
+        SELECT nom INTO nom_utilisateur
+        FROM users
+        WHERE id_user = NEW.id_user;
+        qte_recent := NEW.qte;
+
+        -- Définir le paramètre de configuration app.user_id pour l'UPDATE
+        IF NEW.id_user IS NOT NULL THEN
+            PERFORM set_config('app.user_id', NEW.id_user::text, true);
+        END IF;
+
+        -- Insertion dans la table audit_approv
+        INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+        VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+
+        -- Réinitialiser le paramètre de configuration app.user_id après l'UPDATE
+        IF NEW.id_user IS NOT NULL THEN
+            PERFORM set_config('app.user_id', NULL, true);
+        END IF;
+
+        RETURN NEW;
+       
+    ELSIF TG_OP = 'DELETE' THEN
+        action_type := 'suppression';
+
+        -- Définir le paramètre de configuration app.user_id pour le DELETE
+         SELECT current_setting('app.user_id') INTO OLD.id_user;
+
+        -- Récupérer le nom de l'utilisateur
+        SELECT u.nom INTO nom_utilisateur
+        FROM users u
+        WHERE u.id_user = OLD.id_user;
+		
+        -- Récupérer les autres valeurs nécessaires
+        SELECT f.nom, p.design, a.qte
+        INTO  nom_fournisseur, design_prod, qte_ancien
+        FROM fournisseur f
+        INNER JOIN approv a ON f.idfr = a.idfr   
+        INNER JOIN produit p ON p.idprod = a.idprod
+        WHERE a.idapprov = OLD.idapprov;
+
+        qte_recent :=  0;
+
+        -- Insertion dans la table audit_approv
+        INSERT INTO audit_approv (action_type, nom, design, qte_anc, qte_rec, user_name)
+        VALUES (action_type, nom_fournisseur, design_prod, qte_ancien, qte_recent, nom_utilisateur);
+
+        -- Réinitialiser le paramètre de configuration app.user_id après le DELETE
+        IF OLD.id_user IS NOT NULL THEN
+            PERFORM set_config('app.user_id', NULL, true);
+        END IF;
+
+        RETURN OLD;
+    END IF;
+END;
